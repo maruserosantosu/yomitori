@@ -81,7 +81,7 @@ input[type=text],input[type=number],select{width:100%;font-size:18px;padding:10p
 </style>
 </head>
 <body>
-<header><h1>読み取り調査 <small>Leitura de balanço — teste v1.4</small></h1><button id="hdrBtn" class="hidden"></button></header>
+<header><h1>読み取り調査 <small>Leitura de balanço — teste v1.6</small></h1><button id="hdrBtn" class="hidden"></button></header>
 <main id="app"></main>
 <div id="flash" class="flash hidden"></div>
 <div id="modal"></div>
@@ -124,6 +124,7 @@ function parse(text){
   const s=text.slice(5,21);
   o.shiji=s.slice(0,6)+"-"+s.slice(6,10)+"-"+s.slice(10,12)+"-"+s.slice(12,14)+"-"+s.slice(14,16);
   o.lot=s.slice(0,10);
+  o.sj=s;
   o.hinban=text.slice(21,41).trim();
   o.ryaku=N(text.slice(46,50)).trim();
   o.okiba=text.slice(77,83).trim();
@@ -132,6 +133,7 @@ function parse(text){
   // 現品票 (RFI): o QR não traz o 略番
   o.genpin=true;
   o.lot=text.slice(5,15);
+  {const s2=text.slice(5,21);if(/^\d{16}$/.test(s2)){o.sj=s2;o.shiji=s2.slice(0,6)+"-"+s2.slice(6,10)+"-"+s2.slice(10,12)+"-"+s2.slice(12,14)+"-"+s2.slice(14,16)}}
   o.hinban=text.slice(23,43).trim();
  }
  return o;
@@ -162,17 +164,23 @@ function qrSVG(bytes){
 /* ===== Leitura: câmera ao vivo (se o navegador permitir) ou foto ===== */
 let stream=null,scanTimer=null,lastHit={k:"",t:0};
 const cv=document.createElement("canvas"),cx=cv.getContext("2d",{willReadFrequently:true});
-function decodeFrom(src,w,h,maxW){
- const sc=Math.min(1,maxW/w);cv.width=Math.round(w*sc);cv.height=Math.round(h*sc);
- cx.drawImage(src,0,0,cv.width,cv.height);
+function decodeFrom(src,w,h,maxW,crop,inv){
+ let sx=0,sy=0,sw=w,sh=h;if(crop){sw=Math.round(w*crop);sh=Math.round(h*crop);sx=Math.round((w-sw)/2);sy=Math.round((h-sh)/2)}
+ const sc=Math.min(1,maxW/sw);cv.width=Math.round(sw*sc);cv.height=Math.round(sh*sc);
+ cx.drawImage(src,sx,sy,sw,sh,0,0,cv.width,cv.height);
  const d=cx.getImageData(0,0,cv.width,cv.height);
- return jsQR(d.data,d.width,d.height,{inversionAttempts:"attemptBoth"});
+ return jsQR(d.data,d.width,d.height,{inversionAttempts:inv||"attemptBoth"});
 }
 async function startCamera(video){
  try{
-  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment",width:{ideal:1280}},audio:false});
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment",width:{ideal:1920},height:{ideal:1080}},audio:false});
+  try{const tr=stream.getVideoTracks()[0],cp=tr.getCapabilities?tr.getCapabilities():{};if(cp.focusMode&&cp.focusMode.includes("continuous"))tr.applyConstraints({advanced:[{focusMode:"continuous"}]}).catch(()=>{})}catch(e){}
   video.srcObject=stream;await video.play();
-  scanTimer=setInterval(()=>{if(video.readyState<2)return;const r=decodeFrom(video,video.videoWidth,video.videoHeight,800);if(r)onCode(r.binaryData)},220);
+  let tick=0;
+  scanTimer=setInterval(()=>{if(video.readyState<2)return;tick++;const W=video.videoWidth,H=video.videoHeight;
+   // alterna: quadro inteiro (rápido) e centro em alta resolução (QR pequeno/denso)
+   const r=tick%2?decodeFrom(video,W,H,800,0,"dontInvert"):decodeFrom(video,W,H,1000,0.55,tick%6===0?"attemptBoth":"dontInvert");
+   if(r)onCode(r.binaryData)},160);
   return true;
  }catch(e){stopCamera();return false}
 }
@@ -187,8 +195,12 @@ function decodePhoto(file){
 /* ===== Retorno ao operador ===== */
 let actx=null;
 function tone(f,st,dur,type){const o=actx.createOscillator(),g=actx.createGain(),c=actx.createDynamicsCompressor();o.type=type||"square";o.frequency.value=f;g.gain.setValueAtTime(0.0001,st);g.gain.exponentialRampToValueAtTime(1.0,st+0.01);g.gain.setValueAtTime(1.0,st+dur-0.02);g.gain.exponentialRampToValueAtTime(0.0001,st+dur);o.connect(g);g.connect(c);c.connect(actx.destination);o.start(st);o.stop(st+dur+0.02)}
-function audioInit(){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();if(actx.state==="suspended")actx.resume()}catch(e){}}
-["touchstart","pointerdown","keydown"].forEach(ev=>document.addEventListener(ev,audioInit,{passive:true}));
+function audioInit(){try{if(navigator.audioSession&&navigator.audioSession.type!=="playback")navigator.audioSession.type="playback"}catch(e){}
+ try{if(actx&&actx.state==="closed")actx=null;actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+  if(actx.state!=="running"){actx.resume().catch(()=>{})}
+  const b=actx.createBuffer(1,1,22050),s=actx.createBufferSource();s.buffer=b;s.connect(actx.destination);s.start(0)}catch(e){}}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&actx&&actx.state!=="running"){try{actx.close()}catch(e){}actx=null}});
+["touchstart","touchend","pointerdown","pointerup","click","keydown"].forEach(ev=>document.addEventListener(ev,audioInit,{passive:true,capture:true}));
 function screenFlash(ok){let d=document.getElementById("sflash");if(!d){d=document.createElement("div");d.id="sflash";d.style.cssText="position:fixed;inset:0;z-index:40;pointer-events:none;opacity:0;transition:opacity .35s;display:flex;align-items:center;justify-content:center;font-size:110px;font-weight:900;color:#fff";document.body.appendChild(d)}
  d.style.background=ok?"rgba(26,138,74,.88)":"rgba(192,57,43,.9)";d.textContent=ok?"✓":"✕";d.style.transition="none";d.style.opacity="1";requestAnimationFrame(()=>requestAnimationFrame(()=>{d.style.transition="opacity .45s";d.style.opacity="0"}))}
 function beep(ok){audioInit();try{const t=actx.currentTime+0.01;
@@ -266,12 +278,23 @@ let curLoc=null,swapId=null,curIO="in";
 function onCode(bytes){
  if(!curLoc)return;
  const k=b64e(bytes),now=Date.now();
- if(k===lastHit.k){lastHit.t=now;return}
+ if(k===lastHit.k&&now-lastHit.t<1500){lastHit.t=now;return} // o mesmo QR parado na câmera é ignorado; tirou e voltou (>1,5 s) = nova leitura
  lastHit={k,t:now};
  const g=openGrp(S.mode,curLoc,true),G=S.grps[g];
- const dup=S.items.find(i=>i.b===k&&i.st==="ok"&&i.mode===S.mode&&(S.mode==="afure"?S.grps[i.grp]&&S.grps[i.grp].label===G.label&&S.grps[i.grp].day===G.day:i.io===curIO||S.mode!=="nyu"));
- if(dup&&!swapId){beep(false);flash("⚠ 読み取り済み — já lido em<br>"+esc(dup.loc),"warn");return}
- const p=parse(sjis(bytes));learn(p);
+ const inSc=i=>i.st==="ok"&&i.mode===S.mode&&(S.mode==="afure"?S.grps[i.grp]&&S.grps[i.grp].label===G.label&&S.grps[i.grp].day===G.day:i.io===curIO||S.mode!=="nyu");
+ const p=parse(sjis(bytes));
+ const dup=S.items.find(i=>inSc(i)&&(i.b===k||sameBox(pOfItem(i),p)));
+ if(dup&&!swapId){beep(false);const same=dup.b!==k;const dG=S.grps[dup.grp]||{};flash("⚠ 読み取り済み — já lido em<br>"+esc(dup.loc)+(dup.sent?"<br>"+esc(sentInfo(dup,dG)):"<br>未送信 (ainda não enviado)")+(same?"<br><small>同じロット (かんばん／現品票)</small>":""),"warn");return}
+ if(!swapId){const near=S.items.find(i=>{if(!inSc(i))return false;const q=pOfItem(i);return q.hinban&&sameH(q.hinban,p.hinban)&&q.lot&&q.lot===p.lot&&!!q.genpin!==!!p.genpin});
+  if(near){beep(false);confirmBox(`同じロットがあります — ${esc(p.hinban)} · ロット ${esc(p.lot)}<br><span class='pt'>Já tem este lote (lido pelo ${near&&pOfItem(near).genpin?"現品票":"かんばん"}). É <b>outra caixa</b>?<br>はい = registrar como outra caixa · いいえ = não registrar</span>`,()=>addCode(bytes,k,p,g,G));return}}
+ addCode(bytes,k,p,g,G);
+}
+function normH(h){return (h||"").replace(/[\s-]/g,"").toUpperCase()}
+function sameH(x,y){const a=normH(x),b=normH(y);if(!a||!b)return false;if(a===b)return true;const [l,s]=a.length>b.length?[a,b]:[b,a];return l.endsWith(s)&&/^0+$/.test(l.slice(0,l.length-s.length))}
+function sameBox(q,p){return !!(q.sj&&p.sj&&q.sj===p.sj&&sameH(q.hinban,p.hinban))}
+const _pc={};function pOfItem(i){return _pc[i.b]||(_pc[i.b]=parse(sjis(b64d(i.b))))}
+function addCode(bytes,k,p,g,G){
+ learn(p);
  const it={id:uid(),b:k,t:new Date().toISOString(),u:S.user,mode:S.mode,loc:curLoc,grp:g,tag:"",st:"ok",sent:false};
  if(S.mode==="nyu")it.io=curIO;
  if(swapId){const old=S.items.find(x=>x.id===swapId);
@@ -354,6 +377,8 @@ function vHome(){
  const rb=document.getElementById("rndB");if(rb)rb.onclick=()=>pickRound("どの回の調査?",l=>{setRound(l,true);flash("🕗 "+l,"ok");vHome()});
 }
 
+const DT=s=>{if(!s)return"";const d=new Date(s);return (d.getMonth()+1)+"/"+d.getDate()+" "+T(s)};
+function sentInfo(x,G){const at=x.sentAt||(G&&G.sentAt),bn=x.sbin||(G&&G.bin);return "送信済 "+DT(at)+(bn?" · 便"+bn:"")}
 function itemRow(x,num,G){
  const p=parse(sjis(b64d(x.b))),ry=ryOf(x,p);
  const cls=x.st==="cancel"?"cancel":x.tag==="swap"?"swap":x.tag==="add"?"add":"";
@@ -361,7 +386,7 @@ function itemRow(x,num,G){
  const mv=x.moved?`<span class="lbl" style="background:#667085">移動 ← ${esc(x.moved)}</span>`:"";
  const io=x.io?`<span class="lbl" style="background:${x.io==="in"?"#1f5fbf":"#c27a00"}">${x.io==="in"?"入庫":"出庫"}</span>`:"";
  const btns=x.st==="cancel"?"":`<div class="ibtn"><button data-sw="${x.id}">差替</button><button data-del="${x.id}">削除</button></div>`;
- return `<div class="item ${cls}"><div class="num">${num}</div><div class="tag">${esc(ry||(p.genpin?"現品票":"—"))}</div><div class="meta"><b>${esc(p.hinban||p.raw.slice(0,24))}</b> ${lab}${io}${mv}<br>${p.lot?"ロット "+esc(p.lot)+" · ":""}${T(x.t)}${x.sent?' · <span class="sent">送信済</span>':' · <span style="color:var(--warn)">未送信</span>'}${x.reason?" · "+esc(x.reason):""}</div>${btns}</div>`;
+ return `<div class="item ${cls}"><div class="num">${num}</div><div class="tag">${esc(ry||(p.genpin?"現品票":"—"))}</div><div class="meta"><b>${esc(p.hinban||p.raw.slice(0,24))}</b> ${lab}${io}${mv}<br>${p.lot?"ロット "+esc(p.lot)+" · ":""}読取 ${new Date(x.t).toDateString()===new Date().toDateString()?T(x.t):DT(x.t)}${x.sent?' · <span class="sent">'+esc(sentInfo(x,G))+'</span>':' · <span style="color:var(--warn)">未送信</span>'}${x.reason?" · "+esc(x.reason):""}</div>${btns}</div>`;
 }
 function vPlace(){
  setHdr("← 戻る",()=>go("home"));
@@ -375,9 +400,9 @@ function vPlace(){
  if(S.mode==="nyu")h+=`<div class="row" style="margin-top:10px"><button class="btn ${curIO==="in"?"":"sec"}" id="ioIn">⇒ 入庫<small>Guardar</small></button><button class="btn ${curIO==="out"?"":"sec"}" id="ioOut" style="${curIO==="out"?"background:var(--warn)":""}">⇐ 出庫<small>Tirar</small></button></div>`;
  h+=`<div class="row" style="margin-top:6px"><div><label>予定数 <span class="pt">Lotes previstos (opcional)</span></label><input id="exp" type="number" inputmode="numeric" value="${G.expect||""}" placeholder="ex.: 28"></div></div></div>
  <button class="btn" id="rd">📷 読み取り <small>Ler peças${G.closed||G.sentAt?" (entram como 追加)":""}</small></button>
- <div class="card" style="margin-top:12px"><h2>読み取り一覧 <span class="pt">Lista na ordem da leitura</span></h2>
+ <div class="card" style="margin-top:12px"><h2>読み取り一覧 <span class="pt">Mais recente em cima ↑ (o número = ordem da leitura)</span></h2>
  <div class="pt" style="margin-bottom:6px"><span class="lbl" style="background:var(--warn)">追加</span> adicionada depois · <span class="lbl" style="background:#1f5fbf">差替</span> trocada · <span class="lbl" style="background:var(--bad)">取消</span> cancelada</div>
- <div id="list">${a.length?a.map((x,i)=>itemRow(x,i+1,G)).join(""):'<div class="pt">まだありません — nenhuma leitura ainda</div>'}</div>
+ <div id="list">${a.length?a.map((x,i)=>itemRow(x,i+1,G)).reverse().join(""):'<div class="pt">まだありません — nenhuma leitura ainda</div>'}</div>
  ${cx.length?`<div class="pt" style="margin-top:10px">取消（記録）</div>`+cx.map(x=>itemRow(x,"✕",G)).join(""):""}</div>
  ${a.length?`<button class="btn sec" id="mvB">📍 場所を変更 <small>Leu no lugar errado? Mover leituras para outro lugar</small></button>`:""}
  <div class="row"><button class="btn ok" id="snd" ${u?"":"disabled style='opacity:.5'"}>送信 <small>Enviar ${u} lote(s)</small></button>${!G.closed&&!G.sentAt?`<button class="btn sec" id="cls">完了 <small>Terminei (próximas = 追加)</small></button>`:""}</div>`;
@@ -439,16 +464,16 @@ function pickBin(G,done){
  const day=G.day,tb=tableFor(day),sug=suggestBin(day),now=minOf(new Date().toTimeString().slice(0,5));
  const m=document.getElementById("modal");
  let np=0;const rows=tb.bins.map((r,i)=>{const n=i+1,past=minOf(r[2])<now-60&&day===wday()&&n!==G.bin;if(past)np++;
-  return `<button class="binb ${past?"past hidden":""} ${n===sug?"sug":""} ${n===G.bin?"on":""}" data-n="${n}"><b>便${n}</b> ${esc(r[1])}<span>本社 ${r[2]} · LC ${r[3]} · ${esc(r[0])}</span>${n===sug?'<em>おすすめ</em>':""}</button>`}).join("");
+  return `<button class="binb ${past?"past":""} ${n===sug?"sug":""} ${n===G.bin?"on":""}" data-n="${n}"><b>便${n}</b> ${esc(r[1])}<span>本社 ${r[2]} · LC ${r[3]} · ${esc(r[0])}</span>${n===sug?'<em>おすすめ</em>':""}</button>`}).join("");
  m.innerHTML=`<div class="overlay"><div class="sheet" style="max-height:85vh;overflow:auto"><h2>どの便? <span class="pt">Qual 便 · ${day}（${WD[wdow(day)]}）· 表 ${esc(tb.name)}</span></h2>
- ${np?`<button class="btn sec" id="binP" style="margin:0 0 8px">⏱ 過ぎた便も表示 (${np}) <small>Mostrar 便 que já passaram</small></button>`:""}${rows||'<div class="note">Hoje não há tabela fixa (ex.: sábado). Digite o número do 便 ou monte a lista do dia em ⚙️ 設定.</div>'}
+ ${np?`<div class="pt" style="margin:0 0 6px">⏱ Os ${np} 便 em cinza já passaram — ainda dá para escolher. A lista abre no 便 sugerido; role para cima para ver os anteriores.</div>`:""}${rows||'<div class="note">Hoje não há tabela fixa (ex.: sábado). Digite o número do 便 ou monte a lista do dia em ⚙️ 設定.</div>'}
  <div class="row" style="margin-top:8px"><input id="binN" type="number" inputmode="numeric" placeholder="便番号" style="flex:1"><button class="btn sec" id="binOk" style="margin-top:0;flex:.6">決定</button></div>
  <button class="btn sec" id="binX">閉じる <small>Fechar</small></button></div></div>`;
  const setB=n=>{G.bin=n;save();m.innerHTML="";flash("🚚 "+binLabel(day,n),"ok");done()};
  m.querySelectorAll(".binb").forEach(b=>b.onclick=()=>setB(+b.dataset.n));
  document.getElementById("binOk").onclick=()=>{const n=+document.getElementById("binN").value;if(n>0)setB(n)};
  document.getElementById("binX").onclick=()=>m.innerHTML="";
- const bp=document.getElementById("binP");if(bp)bp.onclick=()=>{m.querySelectorAll(".binb.past").forEach(x=>x.classList.remove("hidden"));bp.remove()};
+ const tg=m.querySelector(".binb.on")||m.querySelector(".binb.sug");if(tg)setTimeout(()=>tg.scrollIntoView({block:"center"}),30);
 }
 
 async function vScan(){
@@ -520,8 +545,8 @@ function vSend(g){
   if(!real){const rl=its.filter(x=>!isTest(x));if(rl.length){beep(false);flash("✕ 実データは送信不可<br>Simulador aceita só テスト読取 ("+rl.length+" lote(s) real)","bad");return}}
   const b=document.getElementById("srvB");b.disabled=true;b.textContent="送信中…";
   try{const now=new Date().toISOString();
-   if(real){await realPost("send",{records:its.map(x=>Object.assign(recOf(x,G),{sentAt:now}))},S.mode);its.forEach(x=>{x.sentAt=now;x.sent=true;x.real=true})}
-   else for(const x of its){x.sentAt=now;await simPut(x,G);x.sent=true;x.sim=true}G.sentAt=now;G.closed=true;save();beep(true);flash("✓ 模擬サーバーへ送信 "+its.length+" ロット","ok");go("place")}
+   if(real){await realPost("send",{records:its.map(x=>Object.assign(recOf(x,G),{sentAt:now}))},S.mode);its.forEach(x=>{x.sentAt=now;x.sbin=G.bin||null;x.sent=true;x.real=true})}
+   else for(const x of its){x.sentAt=now;x.sbin=G.bin||null;await simPut(x,G);x.sent=true;x.sim=true}G.sentAt=now;G.closed=true;save();beep(true);flash("✓ 模擬サーバーへ送信 "+its.length+" ロット","ok");go("place")}
   catch(e){save();beep(false);flash("✕ 送信失敗 — "+esc(e&&e.code||"erro")+"<br>Tente de novo","bad");b.disabled=false;b.textContent="再送信"}};
  document.getElementById("st").onclick=()=>{sendQ=its.map(x=>[x]);sendI=0;showSend()};
 }
@@ -540,7 +565,7 @@ function showSend(){
  document.getElementById("pv").onclick=()=>{if(sendI>0){sendI--;showSend()}};
  document.getElementById("nx").onclick=()=>{if(sendI<sendQ.length-1){sendI++;showSend()}else flash("最後です — último","warn")};
  document.getElementById("au").onclick=()=>{if(autoT){stopAuto();showSend();return}autoT=setInterval(()=>{if(sendI<sendQ.length-1){sendI++;showSend()}else{stopAuto();showSend()}},2000);showSend()};
- document.getElementById("fin").onclick=()=>{stopAuto();confirmBox("PCに全部入りましたか?<br><span class='pt'>Confira no PC se todas entraram antes de marcar.</span>",()=>{const now=new Date().toISOString();sendQ.flat().forEach(x=>{x.sent=true;x.sentAt=now});G.sentAt=now;G.closed=true;save();flash("送信済 — marcado","ok");go("place")})};
+ document.getElementById("fin").onclick=()=>{stopAuto();confirmBox("PCに全部入りましたか?<br><span class='pt'>Confira no PC se todas entraram antes de marcar.</span>",()=>{const now=new Date().toISOString();sendQ.flat().forEach(x=>{x.sent=true;x.sentAt=now;x.sbin=G.bin||null});G.sentAt=now;G.closed=true;save();flash("送信済 — marcado","ok");go("place")})};
 }
 
 function vFix(){
@@ -605,7 +630,7 @@ function vCfg(){
 
 let cfgM="afure";
 let lastQ="",lastRange="today";
-function allReadings(){return S.items.map(x=>{const p=parse(sjis(b64d(x.b)));const G=S.grps[x.grp]||{};return{r:ryOf(x,p),h:p.hinban||p.raw.slice(0,24),l:p.lot||"",loc:x.loc,t:x.t,s:x.sent?1:0,label:MODES[x.mode].jp+(x.mode==="afure"&&G.label?" · "+G.label:"")+(G.bin?" · 便"+G.bin:"")+(x.io?" · "+(x.io==="in"?"入庫":"出庫"):""),c:x.st==="cancel"}})}
+function allReadings(){return S.items.map(x=>{const p=parse(sjis(b64d(x.b)));const G=S.grps[x.grp]||{};return{r:ryOf(x,p),h:p.hinban||p.raw.slice(0,24),l:p.lot||"",loc:x.loc,t:x.t,s:x.sent?1:0,si:x.sent?sentInfo(x,G):"",label:MODES[x.mode].jp+(x.mode==="afure"&&G.label?" · "+G.label:"")+(G.bin?" · 便"+G.bin:"")+(x.io?" · "+(x.io==="in"?"入庫":"出庫"):""),c:x.st==="cancel"}})}
 function vSearch(){
  setHdr("← 戻る",()=>go("home"));
  app.innerHTML=`<div class="card"><h2>🔍 検索 <span class="pt">Procurar peça</span></h2>
@@ -620,7 +645,7 @@ function vSearch(){
   const list=allReadings().filter(x=>(lastRange==="all"||wday(new Date(x.t))===day)&&(N(x.r).toUpperCase().includes(k)||N(x.h).toUpperCase().replace(/\s/g,"").includes(k)||String(x.l||"").includes(k))).sort((a,b)=>b.t.localeCompare(a.t));
   if(!list.length){out.innerHTML=`<div class="card" style="border-color:#f0c9c4;background:#fdf3f2"><div class="big" style="color:var(--bad)">見つかりません</div><div class="pt" style="text-align:center">Não encontrado.</div></div>`;return}
   out.innerHTML=`<div class="card"><h2>${list.length} 件</h2>`+list.map(x=>{const t=new Date(x.t);
-   return `<div class="item ${x.c?"cancel":""}"><div class="tag">${esc(N(x.r)||"—")}</div><div class="meta"><b>${esc(x.h)}</b><br>${x.l?"ロット "+esc(x.l)+"<br>":""}📍 ${esc(x.loc)} · ${esc(x.label)}<br>${t.toLocaleDateString("ja-JP",{month:"2-digit",day:"2-digit"})} ${T(x.t)}${x.c?' · <span style="color:var(--bad)">取消</span>':x.s?' · <span class="sent">送信済</span>':""}</div></div>`}).join("")+`</div>`};
+   return `<div class="item ${x.c?"cancel":""}"><div class="tag">${esc(N(x.r)||"—")}</div><div class="meta"><b>${esc(x.h)}</b><br>${x.l?"ロット "+esc(x.l)+"<br>":""}📍 ${esc(x.loc)} · ${esc(x.label)}<br>${t.toLocaleDateString("ja-JP",{month:"2-digit",day:"2-digit"})} ${T(x.t)}${x.c?' · <span style="color:var(--bad)">取消</span>':x.s?'<br><span class="sent">'+esc(x.si)+'</span>':""}</div></div>`}).join("")+`</div>`};
  q.oninput=run;
  document.getElementById("rT").onclick=()=>{lastRange="today";vSearch()};
  document.getElementById("rA").onclick=()=>{lastRange="all";vSearch()};
