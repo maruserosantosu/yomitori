@@ -81,7 +81,7 @@ input[type=text],input[type=number],select{width:100%;font-size:18px;padding:10p
 </style>
 </head>
 <body>
-<header><h1>読み取り調査 <small>Leitura de balanço — teste v1.7</small></h1><button id="hdrBtn" class="hidden"></button></header>
+<header><h1>読み取り調査 <small>Leitura de balanço — teste v1.8</small></h1><button id="hdrBtn" class="hidden"></button></header>
 <main id="app"></main>
 <div id="flash" class="flash hidden"></div>
 <div id="modal"></div>
@@ -284,7 +284,7 @@ function openGrp(mode,loc,create){const k=mode+"|"+loc;let g=S.open[k];
  return g}
 function act(g){return S.items.filter(x=>x.grp===g&&x.st==="ok").sort((a,b)=>a.pos-b.pos)}
 function unsent(g){return act(g).filter(x=>!x.sent)}
-function fixes(g){return S.items.filter(x=>(!g||x.grp===g)&&x.st==="cancel"&&x.wasSent)}
+function fixes(g){return S.items.filter(x=>(!g||x.grp===g)&&((x.st==="cancel"&&x.wasSent)||(x.st==="ok"&&x.rebin)))}
 
 let curLoc=null,swapId=null,curIO="in";
 function onCode(bytes){
@@ -395,10 +395,12 @@ function itemRow(x,num,G){
  const p=parse(sjis(b64d(x.b))),ry=ryOf(x,p);
  const cls=x.st==="cancel"?"cancel":x.tag==="swap"?"swap":x.tag==="add"?"add":"";
  const lab=x.st==="cancel"?`<span class="lbl" style="background:var(--bad)">取消</span>`:x.tag==="swap"?`<span class="lbl" style="background:#1f5fbf">差替</span>`:x.tag==="add"?`<span class="lbl" style="background:var(--warn)">追加</span>`:"";
+ const ib=(x.ibin&&G&&x.ibin!==G.bin&&!x.rebin)?`<span class="lbl" style="background:#7b4fbf">便${x.ibin}</span>`:"";
+ const rb=x.rebin?`<span class="lbl" style="background:#7b4fbf">便変更 ${x.rebin.from}→${x.rebin.to}</span>`:"";
  const mv=x.moved?`<span class="lbl" style="background:#667085">移動 ← ${esc(x.moved)}</span>`:"";
  const io=x.io?`<span class="lbl" style="background:${x.io==="in"?"#1f5fbf":"#c27a00"}">${x.io==="in"?"入庫":"出庫"}</span>`:"";
- const btns=x.st==="cancel"?"":`<div class="ibtn"><button data-sw="${x.id}">差替</button><button data-del="${x.id}">削除</button></div>`;
- return `<div class="item ${cls}"><div class="num">${num}</div><div class="tag">${esc(ry||(p.genpin?"現品票":"—"))}</div><div class="meta"><b>${esc(p.hinban||p.raw.slice(0,24))}</b> ${lab}${io}${mv}<br>${p.lot?"ロット "+esc(p.lot)+" · ":""}読取 ${new Date(x.t).toDateString()===new Date().toDateString()?T(x.t):DT(x.t)}${x.sent?' · <span class="sent">'+esc(sentInfo(x,G))+'</span>':' · <span style="color:var(--warn)">未送信</span>'}${x.reason?" · "+esc(x.reason):""}</div>${btns}</div>`;
+ const btns=x.st==="cancel"?"":`<div class="ibtn">${x.mode==="tsumi"?`<button data-bn="${x.id}">便</button>`:""}<button data-sw="${x.id}">差替</button><button data-del="${x.id}">削除</button></div>`;
+ return `<div class="item ${cls}"><div class="num">${num}</div><div class="tag">${esc(ry||(p.genpin?"現品票":"—"))}</div><div class="meta"><b>${esc(p.hinban||p.raw.slice(0,24))}</b> ${lab}${io}${mv}${rb}${ib}<br>${p.lot?"ロット "+esc(p.lot)+" · ":""}読取 ${new Date(x.t).toDateString()===new Date().toDateString()?T(x.t):DT(x.t)}${x.sent?' · <span class="sent">'+esc(sentInfo(x,G))+'</span>':' · <span style="color:var(--warn)">未送信</span>'}${x.reason?" · "+esc(x.reason):""}</div>${btns}</div>`;
 }
 function vPlace(){
  setHdr("← 戻る",()=>go("home"));
@@ -430,6 +432,7 @@ function vPlace(){
  app.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{const x=S.items.find(i=>i.id===b.dataset.del);
   if(x.sent)askReason("送信済のロットを取消しますか?<br><span class='pt'>Já foi enviada: fica registrada como 取消 e precisa corrigir também no PC.</span>",async r=>{x.st="cancel";x.wasSent=true;x.ct=new Date().toISOString();x.reason=r;x.cu=S.user;if(x.sim)await simCancel(x);if(x.real)await realCancel(x);save();vPlace()});
   else confirmBox("削除しますか?<br><span class='pt'>Apagar esta leitura (ainda não enviada)?</span>",()=>{S.items=S.items.filter(i=>i.id!==x.id);save();vPlace()})});
+ app.querySelectorAll("[data-bn]").forEach(b=>b.onclick=()=>{const x=S.items.find(i=>i.id===b.dataset.bn);pickBin(G,()=>vPlace(),n=>itemBin(x,G,n))});
  app.querySelectorAll("[data-sw]").forEach(b=>b.onclick=()=>{const x=S.items.find(i=>i.id===b.dataset.sw);
   askReason("差し替え — leia a peça nova<br><span class='pt'>A nova entra no mesmo número da lista.</span>",r=>{x.pendReason=r;swapId=x.id;go("scan")})});
 }
@@ -472,7 +475,16 @@ function askReason(msg,cb){
  let sel=R[0];m.querySelectorAll(".chip").forEach(c=>c.onclick=()=>{sel=c.dataset.r;m.querySelectorAll(".chip").forEach(x=>x.classList.toggle("on",x===c))});
  document.getElementById("cn").onclick=()=>m.innerHTML="";document.getElementById("cy").onclick=()=>{m.innerHTML="";cb(sel)};
 }
-function pickBin(G,done){
+function itemBin(x,G,n){const cur=x.ibin||x.sbin||G.bin;if(n===cur){vPlace();return}
+ const p=parse(sjis(b64d(x.b)));
+ const go2=()=>{const now=new Date().toISOString();
+  if(x.sent){const from=x.sbin||G.bin;const orig=x.rebin?x.rebin.from:from;if(orig===n)delete x.rebin;else x.rebin={from:orig,to:n,at:now,u:S.user};x.sbin=n;x.fixed=false;
+   if(x.sim&&DB)DB.collection("sim").doc(x.id).update({bin:n,rebinFrom:from,rebinAt:now}).catch(()=>{});
+   if(x.real)realPost("rebin",{ids:[x.id],to:n,at:now},x.mode).catch(()=>flash("⚠ 便変更をサーバーへ送れませんでした — corrigir no PC","warn"))}
+  if(n===G.bin)delete x.ibin;else x.ibin=n;
+  save();flash("🚚 "+esc(ryOf(x,p)||p.hinban)+" → 便"+n+(x.sent?"<br>送信済 — corrigir também no PC":""),"ok");vPlace()};
+ confirmBox(`${esc(ryOf(x,p)||"")} ${esc(p.hinban)}<br>便${cur} → 便${n} に変更しますか?<br><span class='pt'>Só esta lote muda de 便.${x.sent?" Já foi enviada: fica o registro 便変更 e ela aparece em ⚠ 要修正 (corrigir no PC).":""}</span>`,go2)}
+function pickBin(G,done,onPick){
  const day=G.day,tb=tableFor(day),sug=suggestBin(day),now=minOf(new Date().toTimeString().slice(0,5));
  const m=document.getElementById("modal");
  let np=0;const rows=tb.bins.map((r,i)=>{const n=i+1,past=minOf(r[2])<now-60&&day===wday()&&n!==G.bin;if(past)np++;
@@ -481,7 +493,14 @@ function pickBin(G,done){
  ${np?`<div class="pt" style="margin:0 0 6px">⏱ Os ${np} 便 em cinza já passaram — ainda dá para escolher. A lista abre no 便 sugerido; role para cima para ver os anteriores.</div>`:""}${rows||'<div class="note">Hoje não há tabela fixa (ex.: sábado). Digite o número do 便 ou monte a lista do dia em ⚙️ 設定.</div>'}
  <div class="row" style="margin-top:8px"><input id="binN" type="number" inputmode="numeric" placeholder="便番号" style="flex:1"><button class="btn sec" id="binOk" style="margin-top:0;flex:.6">決定</button></div>
  <button class="btn sec" id="binX">閉じる <small>Fechar</small></button></div></div>`;
- const setB=n=>{G.bin=n;save();m.innerHTML="";flash("🚚 "+binLabel(day,n),"ok");done()};
+ const setB=n=>{if(onPick){m.innerHTML="";onPick(n);return}const gid=Object.keys(S.grps).find(q=>S.grps[q]===G);const sent=S.items.filter(x=>x.grp===gid&&x.st==="ok"&&x.sent&&!x.ibin&&(x.sbin||G.bin)!==n);S.items.forEach(x=>{if(x.grp===gid&&x.ibin===n&&!x.sent)delete x.ibin});
+  const apply=()=>{const now=new Date().toISOString();
+   sent.forEach(x=>{const from=x.sbin||G.bin;const orig=x.rebin?x.rebin.from:from;if(orig===n)delete x.rebin;else x.rebin={from:orig,to:n,at:now,u:S.user};x.sbin=n;x.fixed=false;
+    if(x.sim&&DB)DB.collection("sim").doc(x.id).update({bin:n,rebinFrom:from,rebinAt:now}).catch(()=>{});});
+   if(sent.some(x=>x.real))realPost("rebin",{ids:sent.filter(x=>x.real).map(x=>x.id),to:n,at:now},G.mode).catch(()=>flash("⚠ 便変更をサーバーへ送れませんでした — corrigir no PC","warn"));
+   G.bin=n;save();m.innerHTML="";flash("🚚 "+binLabel(day,n)+(sent.length?"<br>送信済 "+sent.length+" 件も変更 — corrigir também no PC":""),"ok");done()};
+  if(sent.length){m.innerHTML="";confirmBox(`送信済のロットが ${sent.length} 件あります。<br>便${sent[0].sbin||G.bin} → 便${n} に変更しますか?<br><span class='pt'>Já foram enviadas. O app troca para o 便${n} e guarda o registro da mudança (便変更). Corrija também no PC — elas vão aparecer em ⚠ 要修正.</span>`,apply)}
+  else apply()};
  m.querySelectorAll(".binb").forEach(b=>b.onclick=()=>setB(+b.dataset.n));
  document.getElementById("binOk").onclick=()=>{const n=+document.getElementById("binN").value;if(n>0)setB(n)};
  document.getElementById("binX").onclick=()=>m.innerHTML="";
@@ -512,7 +531,7 @@ document.getElementById("photo").onchange=async e=>{const f=e.target.files[0];if
 /* ----- Simulador de servidor (artifact db; só dados de teste) ----- */
 let DB=null,srvUnsub=null;
 function isTest(x){const p=parse(sjis(b64d(x.b)));return (p.hinban||"").startsWith("99999-")}
-function recOf(x,G){const p=parse(sjis(b64d(x.b)));return{id:x.id,mode:x.mode,loc:x.loc,bin:G.bin||null,rnd:G.mode==="afure"?(G.label||""):"",day:G.day,io:x.io||null,ry:ryOf(x,p)||"",hinban:p.hinban||"",lot:p.lot||"",qty:p.shuyo||null,shiji:p.shiji||"",t:x.t,u:x.u||"",dev:devId(),tag:x.tag||"",reason:x.reason||"",ref:x.ref||"",raw:x.b}}
+function recOf(x,G){const p=parse(sjis(b64d(x.b)));return{id:x.id,mode:x.mode,loc:x.loc,bin:x.ibin||G.bin||null,rnd:G.mode==="afure"?(G.label||""):"",day:G.day,io:x.io||null,ry:ryOf(x,p)||"",hinban:p.hinban||"",lot:p.lot||"",qty:p.shuyo||null,shiji:p.shiji||"",t:x.t,u:x.u||"",dev:devId(),tag:x.tag||"",reason:x.reason||"",ref:x.ref||"",raw:x.b}}
 function sc(m){S.cfg.srv=S.cfg.srv||{};if(!S.cfg.srv.afure){const o={server:S.cfg.server||"",key:S.cfg.key||"",enabled:!!S.cfg.enabled};["afure","tsumi","nyu"].forEach(k=>S.cfg.srv[k]=S.cfg.srv[k]||Object.assign({},o))}return S.cfg.srv[m]}
 function realOn(m){const c=sc(m);return !!(c.enabled&&c.server)}
 async function realPost(type,body,m){const c=sc(m);const ac=new AbortController();const tm=setTimeout(()=>ac.abort(),10000);
@@ -550,6 +569,7 @@ function vSend(g){
  const real=realOn(S.mode),srv=real||!!DB;
  app.innerHTML=`<div class="card"><h2>送信 <span class="pt">Enviar</span></h2>
  <div class="pt">${esc(G.loc)} · ${its.length} ロット${S.mode==="tsumi"?" · "+esc(binLabel(G.day,G.bin)):""}${S.mode==="afure"?" · "+esc(G.day+" "+(G.label||"")):""}${S.mode==="nyu"?" · 入庫/出庫":""}</div>
+ ${(()=>{const o=its.filter(x=>x.ibin&&x.ibin!==G.bin);if(!o.length)return"";const by={};o.forEach(x=>{(by[x.ibin]=by[x.ibin]||[]).push(x)});return `<div class="note" style="border:2px solid #7b4fbf;background:#f5f0fd;margin-top:6px">⚠ 別の便のロットがあります — ${Object.entries(by).map(([b,a])=>"便"+b+": "+a.length+"件").join(" · ")}<br><span class="pt">No envio ao servidor, cada lote vai com o próprio 便. Pelo QR no PC, registre essas lotes no 便 certo.</span></div>`})()}
  <button class="btn" id="srvB" style="${srv?"":"opacity:.5"}">${real?"☁️ サーバーへ保存・送信":srv?"🖥 模擬サーバーへ保存・送信":"☁️ サーバーへ保存・送信"} <small>${real?"Servidor configurado em ⚙️ 設定":srv?"Simulador (só dados de テスト読取)":"Servidor ainda não conectado (meta — STEP 3)"}</small></button>
  <div class="note" style="margin-top:10px"><b>Por enquanto (teste):</b> passar para o PC pelo scanner. No PC abra a tela/aba do mesmo lugar${S.mode==="tsumi"?" e escolha o mesmo 便":""}, aumente o brilho do celular e leia os QRs um por um.</div>
  <button class="btn sec" id="st">QRを表示 <small>Mostrar QRs (scanner)</small></button></div>`;
@@ -557,8 +577,8 @@ function vSend(g){
   if(!real){const rl=its.filter(x=>!isTest(x));if(rl.length){beep(false);flash("✕ 実データは送信不可<br>Simulador aceita só テスト読取 ("+rl.length+" lote(s) real)","bad");return}}
   const b=document.getElementById("srvB");b.disabled=true;b.textContent="送信中…";
   try{const now=new Date().toISOString();
-   if(real){await realPost("send",{records:its.map(x=>Object.assign(recOf(x,G),{sentAt:now}))},S.mode);its.forEach(x=>{x.sentAt=now;x.sbin=G.bin||null;x.sent=true;x.real=true})}
-   else for(const x of its){x.sentAt=now;x.sbin=G.bin||null;await simPut(x,G);x.sent=true;x.sim=true}G.sentAt=now;G.closed=true;save();beep(true);flash("✓ 模擬サーバーへ送信 "+its.length+" ロット","ok");go("place")}
+   if(real){await realPost("send",{records:its.map(x=>Object.assign(recOf(x,G),{sentAt:now}))},S.mode);its.forEach(x=>{x.sentAt=now;x.sbin=x.ibin||G.bin||null;x.sent=true;x.real=true})}
+   else for(const x of its){x.sentAt=now;x.sbin=x.ibin||G.bin||null;await simPut(x,G);x.sent=true;x.sim=true}G.sentAt=now;G.closed=true;save();beep(true);flash("✓ 模擬サーバーへ送信 "+its.length+" ロット","ok");go("place")}
   catch(e){save();beep(false);flash("✕ 送信失敗 — "+esc(e&&e.code||"erro")+"<br>Tente de novo","bad");b.disabled=false;b.textContent="再送信"}};
  document.getElementById("st").onclick=()=>{sendQ=its.map(x=>[x]);sendI=0;showSend()};
 }
@@ -577,15 +597,15 @@ function showSend(){
  document.getElementById("pv").onclick=()=>{if(sendI>0){sendI--;showSend()}};
  document.getElementById("nx").onclick=()=>{if(sendI<sendQ.length-1){sendI++;showSend()}else flash("最後です — último","warn")};
  document.getElementById("au").onclick=()=>{if(autoT){stopAuto();showSend();return}autoT=setInterval(()=>{if(sendI<sendQ.length-1){sendI++;showSend()}else{stopAuto();showSend()}},2000);showSend()};
- document.getElementById("fin").onclick=()=>{stopAuto();confirmBox("PCに全部入りましたか?<br><span class='pt'>Confira no PC se todas entraram antes de marcar.</span>",()=>{const now=new Date().toISOString();sendQ.flat().forEach(x=>{x.sent=true;x.sentAt=now;x.sbin=G.bin||null});G.sentAt=now;G.closed=true;save();flash("送信済 — marcado","ok");go("place")})};
+ document.getElementById("fin").onclick=()=>{stopAuto();confirmBox("PCに全部入りましたか?<br><span class='pt'>Confira no PC se todas entraram antes de marcar.</span>",()=>{const now=new Date().toISOString();sendQ.flat().forEach(x=>{x.sent=true;x.sentAt=now;x.sbin=x.ibin||G.bin||null});G.sentAt=now;G.closed=true;save();flash("送信済 — marcado","ok");go("place")})};
 }
 
 function vFix(){
  setHdr("← 戻る",()=>go("home"));
- const L=fixes().sort((a,b)=>b.ct.localeCompare(a.ct));
+ const L=fixes().sort((a,b)=>((b.ct||b.rebin&&b.rebin.at)||"").localeCompare((a.ct||a.rebin&&a.rebin.at)||""));
  app.innerHTML=`<div class="card"><h2>⚠ 要修正 <span class="pt">Correções depois do envio</span></h2>
  <div class="note">Estas lotes já tinham sido enviadas e foram canceladas/trocadas. Enquanto não há servidor, corrija também no PC (ex.: 積付照会・修正 / 入庫照会・修正) e marque como feito.</div>
- ${L.length?L.map(x=>{const p=parse(sjis(b64d(x.b)));const n=S.items.find(i=>i.ref===x.id);return `<div class="item ${x.fixed?"":"cancel"}"><div class="tag">${esc(ryOf(x,p))}</div><div class="meta"><b>${esc(p.hinban)}</b> ロット ${esc(p.lot||"")}<br>📍 ${esc(x.loc)} · 取消 ${T(x.ct)} · ${esc(x.reason||"")} · ${esc(x.cu||"")}${n?`<br>→ 差替: <b>${esc(ryOf(n))}</b> ${esc(parse(sjis(b64d(n.b))).lot||"")}`:""}</div><div class="ibtn"><button data-ok="${x.id}" style="color:var(--ok)">${x.fixed?"済":"PC修正済"}</button></div></div>`}).join(""):'<div class="pt">なし — nenhuma</div>'}</div>`;
+ ${L.length?L.map(x=>{const p=parse(sjis(b64d(x.b)));if(x.rebin&&x.st==="ok")return `<div class="item ${x.fixed?"":"swap"}"><div class="tag">${esc(ryOf(x,p))}</div><div class="meta"><b>${esc(p.hinban)}</b> ロット ${esc(p.lot||"")}<br>📍 ${esc(x.loc)} · <b>便変更 便${x.rebin.from} → 便${x.rebin.to}</b> · ${DT(x.rebin.at)} · ${esc(x.rebin.u||"")}</div><div class="ibtn"><button data-ok="${x.id}">${x.fixed?"↩":"PC修正済"}</button></div></div>`;const n=S.items.find(i=>i.ref===x.id);return `<div class="item ${x.fixed?"":"cancel"}"><div class="tag">${esc(ryOf(x,p))}</div><div class="meta"><b>${esc(p.hinban)}</b> ロット ${esc(p.lot||"")}<br>📍 ${esc(x.loc)} · 取消 ${T(x.ct)} · ${esc(x.reason||"")} · ${esc(x.cu||"")}${n?`<br>→ 差替: <b>${esc(ryOf(n))}</b> ${esc(parse(sjis(b64d(n.b))).lot||"")}`:""}</div><div class="ibtn"><button data-ok="${x.id}" style="color:var(--ok)">${x.fixed?"済":"PC修正済"}</button></div></div>`}).join(""):'<div class="pt">なし — nenhuma</div>'}</div>`;
  app.querySelectorAll("[data-ok]").forEach(b=>b.onclick=()=>{const x=S.items.find(i=>i.id===b.dataset.ok);x.fixed=!x.fixed;save();vFix()});
 }
 
