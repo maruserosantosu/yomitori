@@ -81,7 +81,7 @@ input[type=text],input[type=number],select{width:100%;font-size:18px;padding:10p
 </style>
 </head>
 <body>
-<header><h1>読み取り調査 <small>Leitura de balanço — teste v1.8</small></h1><button id="hdrBtn" class="hidden"></button></header>
+<header><h1>読み取り調査 <small>Leitura de balanço — teste v1.9</small></h1><button id="hdrBtn" class="hidden"></button></header>
 <main id="app"></main>
 <div id="flash" class="flash hidden"></div>
 <div id="modal"></div>
@@ -95,7 +95,7 @@ input[type=text],input[type=number],select{width:100%;font-size:18px;padding:10p
 /* ===== Locais (abas do Excel あふれ調査原紙) ===== */
 const BUILDINGS=[
  {jp:"第1工場",pt:"Barracão 1 — módulos",locs:["発送待機品","モジュールレーン1","モジュールレーン2","異常品置場","あふれ品置場"]},
- {jp:"第3工場",pt:"Barracão 3 — 黄色台車",locs:["黄色台車","第三工場"]},
+ {jp:"第3工場",pt:"Barracão 3 — carrinho amarelo",locs:["黄色台車","第三工場"]},
  {jp:"第5工場",pt:"Barracão 5 — paletes / Kensa",locs:["パレット品お届け場","パレットレーン1","パレットレーン2","パレットレーン3"]}
 ];
 const ALL_LOCS=BUILDINGS.flatMap(b=>b.locs);
@@ -228,6 +228,8 @@ const MODES={
  tsumi:{jp:"積付登録",pt:"Registro de 便",col:"#1a8a4a"},
  nyu:{jp:"入出庫登録",pt:"Entrada / saída",col:"#c27a00"}
 };
+const LOC_PT={"発送待機品":"Aguardando envio","モジュールレーン1":"Módulo 1","モジュールレーン2":"Módulo 2","異常品置場":"Peças com problema","あふれ品置場":"Excedentes","黄色台車":"Carrinho amarelo","第三工場":"Barracão 3","第3工場":"Barracão 3","パレット品お届け場":"Recebimento de paletes","パレットレーン1":"Palete 1","パレットレーン2":"Palete 2","パレットレーン3":"Palete 3","第1工場 あふれ品置場":"Excedentes do Barracão 1"};
+function locPT(l){return LOC_PT[l]||""}
 const PLACES={
  afure:BUILDINGS,
  tsumi:[{jp:"物理置場",pt:"Local de carregamento",locs:["モジュールレーン1","モジュールレーン2","パレットレーン1","パレットレーン2","パレットレーン3","黄色台車"]}],
@@ -375,7 +377,7 @@ function vHome(){
  for(const b of PLACES[S.mode]){h+=`<div class="bld">${b.jp} · ${b.pt}</div>`;
   for(const l of b.locs){const g=openGrp(S.mode,l,false);const a=g?act(g):[];const u=a.filter(x=>!x.sent).length;const G=g&&S.grps[g];
    const sub=S.mode==="tsumi"&&G?`<span class="pt" style="display:block">${esc(binLabel(G.day,G.bin))}</span>`:S.mode==="afure"&&G&&a.length?`<span class="pt" style="display:block">${esc(G.day)} · ${esc(G.label||"")}</span>`:"";
-   h+=`<button class="loc" data-l="${esc(l)}"><span>${esc(l)}${sub}</span><span class="n ${a.length?"":"z"}">${a.length}${u&&u!==a.length?`<small style="font-size:10px"> /${u}未</small>`:""}</span></button>`}}
+   h+=`<button class="loc" data-l="${esc(l)}"><span>${esc(l)}${locPT(l)?`<small class="pt" style="display:block;font-weight:600">${esc(locPT(l))}</small>`:""}${sub}</span><span class="n ${a.length?"":"z"}">${a.length}${u&&u!==a.length?`<small style="font-size:10px"> /${u}未</small>`:""}</span></button>`}}
  if(S.mode==="afure")h+=`<button class="btn sec" id="newS">新しい調査を開始 <small>Nova rodada do balanço (a anterior fica no histórico)</small></button>`;
  if(fx)h+=`<button class="btn bad" onclick="go('fix')">⚠ 要修正 ${fx}件 <small>Correções para fazer também no PC</small></button>`;
  if(DB)h+=`<button class="btn sec" onclick="go('server')" style="border:2px dashed var(--acc)">🖥 模擬サーバー <small>Simulador do servidor da fábrica (teste)</small></button>`;
@@ -407,7 +409,7 @@ function vPlace(){
  const M=MODES[S.mode];const g=openGrp(S.mode,curLoc,true),G=S.grps[g];
  const a=act(g),u=a.filter(x=>!x.sent).length,cx=S.items.filter(x=>x.grp===g&&x.st==="cancel");
  const over=G.expect&&a.length>G.expect;
- let h=`<div class="card" style="border-top:5px solid ${M.col}"><div class="pt">${M.jp} · 場所</div><div class="big" style="text-align:left">${esc(curLoc)}</div>
+ let h=`<div class="card" style="border-top:5px solid ${M.col}"><div class="pt">${M.jp} · 場所</div><div class="big" style="text-align:left">${esc(curLoc)}</div>${locPT(curLoc)?`<div class="pt" style="font-size:18px;font-weight:700">${esc(locPT(curLoc))}</div>`:""}
  <div class="stat"><div><b style="color:${over?"var(--warn)":"inherit"}">${a.length}${G.expect?" / "+G.expect:""}</b><span class="pt">ロット${over?" ⚠ 予定より多い":""}</span></div><div><b>${u}</b><span class="pt">未送信</span></div></div>`;
  if(S.mode==="afure")h+=`<button class="btn sec" id="rndP" style="margin-top:10px;text-align:left">🕗 ${esc(G.day)} · ${esc(G.label||"")}<small>回を変更 — trocar o horário do balanço</small></button>`;
  if(S.mode==="tsumi")h+=`<button class="btn sec" id="binB" style="margin-top:10px;text-align:left">🚚 ${esc(binLabel(G.day,G.bin))}<small>便を変更 — trocar o 便</small></button>`;
@@ -444,7 +446,7 @@ function moveSheet(g,a){
  <div style="max-height:32vh;overflow:auto;margin:6px 0">${a.map((x,i)=>{const p=parse(sjis(b64d(x.b)));return`<label style="display:flex;gap:10px;align-items:center;padding:6px 2px;border-bottom:1px solid var(--line)"><input type="checkbox" data-mi="${x.id}" checked style="width:22px;height:22px"><span><b>${i+1}. ${esc(ryOf(x,p)||"—")}</b> <span class="pt">${esc(p.hinban||"")}${x.sent?" · 送信済":""}</span></span></label>`}).join("")}</div>
  <button class="btn sec" id="mvAll" style="padding:8px">全部 解除／選択 <small>Desmarcar / marcar todas</small></button>
  <div class="pt" style="margin-top:8px">2. Para qual lugar?</div>
- <div class="chips">${locs.map(l=>`<button class="chip" data-d="${esc(l)}">${esc(l)}</button>`).join("")}</div>
+ <div class="chips">${locs.map(l=>`<button class="chip" data-d="${esc(l)}">${esc(l)}${locPT(l)?"<br><small>"+esc(locPT(l))+"</small>":""}</button>`).join("")}</div>
  <div class="row"><button class="btn sec" id="mvN">やめる <small>Cancelar</small></button><button class="btn" id="mvY" disabled style="opacity:.5">移動 <small>Mover</small></button></div></div></div>`;
  const yb=document.getElementById("mvY");
  m.querySelectorAll("[data-d]").forEach(c=>c.onclick=()=>{dest=c.dataset.d;m.querySelectorAll("[data-d]").forEach(x=>x.classList.toggle("on",x===c));yb.disabled=false;yb.style.opacity=1});
@@ -454,7 +456,7 @@ function moveSheet(g,a){
   if(!dest||!ids.length){flash("Escolha as leituras e o lugar","warn");return}
   const sel=S.items.filter(x=>ids.includes(x.id)),ns=sel.filter(x=>x.sent).length;
   m.innerHTML="";
-  confirmBox(`${sel.length} 件を「${esc(dest)}」へ移動しますか?<br><span class='pt'>Mover ${sel.length} leitura(s) de ${esc(curLoc)} para ${esc(dest)}.${ns?`<br>⚠ ${ns} já enviada(s): ficam como 取消 aqui e entram como 追加 no lugar novo (precisa reenviar).`:""}</span>`,()=>doMove(g,sel,dest))}}
+  confirmBox(`${sel.length} 件を「${esc(dest)}」へ移動しますか?<br><span class='pt'>Mover ${sel.length} leitura(s) de ${esc(locPT(curLoc)||curLoc)} para ${esc(locPT(dest)||dest)}.${ns?`<br>⚠ ${ns} já enviada(s): ficam como 取消 aqui e entram como 追加 no lugar novo (precisa reenviar).`:""}</span>`,()=>doMove(g,sel,dest))}}
 function doMove(g,sel,dest){
  const dg=openGrp(S.mode,dest,true),now=new Date().toISOString();
  let mp=Math.max(0,...S.items.filter(i=>i.grp===dg).map(i=>i.pos||0)),n=0,skip=0;
@@ -510,7 +512,7 @@ function pickBin(G,done,onPick){
 async function vScan(){
  setHdr("← 戻る",()=>{swapId=null;go("place")});
  const sw=swapId&&S.items.find(x=>x.id===swapId);
- app.innerHTML=`<div class="card" style="${sw?"border:3px solid #1f5fbf":""}"><div class="pt">${MODES[S.mode].jp} · 場所</div><div class="big" style="text-align:left">${esc(curLoc)}</div>
+ app.innerHTML=`<div class="card" style="${sw?"border:3px solid #1f5fbf":""}"><div class="pt">${MODES[S.mode].jp} · 場所</div><div class="big" style="text-align:left">${esc(curLoc)}</div>${locPT(curLoc)?`<div class="pt" style="font-size:18px;font-weight:700">${esc(locPT(curLoc))}</div>`:""}
  ${sw?`<div class="note" style="background:#eaf1fc;border-color:#9bb8e8">差し替え中：${esc(ryOf(sw))} → <b>leia a peça nova</b></div>`:""}
  ${S.mode==="nyu"?`<div class="pt">${curIO==="in"?"⇒ 入庫 guardar":"⇐ 出庫 tirar"}</div>`:""}<div class="pt" id="sc"></div></div>
  <div id="camWrap" class="cam hidden"><video id="vid" playsinline muted></video><div class="aim"></div></div>
